@@ -22,24 +22,27 @@
 #pragma comment(lib, "Httpapi.lib")
 
 typedef float vmatrix_t[4][4];
-#define WEBRADAR_OFF_ENTLIST				0x4C3C454
-#define WEBRADAR_OFF_VIEWMATRIX				0x4C2DE84
-#define WEBRADAR_OFF_CLIENTSTATE			0x588A2C
-
-#define WEBRADAR_OFF_CLIENTSTATE_VIEWANGLE	0x4D10
-#define WEBRADAR_OFF_CLIENTSTATE_LOCAL		0x180
-#define WEBRADAR_OFF_CLIENTSTATE_MAP		0x28C
-#define WEBRADAR_OFF_CLIENTSTATE_PLAYERINFO	0x5240
-#define WEBRADAR_OFF_ANGEYEANGLE			0xB250
-#define WEBRADAR_OFF_LIFESTATE				0x25B
-#define WEBRADAR_OFF_DORMANT				0xE9
-#define WEBRADAR_OFF_TEAM					0xF0
-#define WEBRADAR_OFF_HEALTH					0xFC
-#define WEBRADAR_OFF_ORIGIN					0x134
 
 BOOL g_webRadarExit = FALSE;
 HANDLE g_webRadarExitEvent = NULL;
 HANDLE g_webRadarWSThread = NULL;
+
+typedef struct _GameOffsets
+{
+	DWORD GO_EntityList;
+	DWORD GO_ViewMatrix;
+	DWORD GO_ClientState;
+	DWORD GO_ClientState_LocalPlayer;
+	DWORD GO_ClientState_ViewAngle;
+	DWORD GO_ClientState_Map;
+	DWORD GO_ClientState_PlayerInfo;
+	DWORD GO_Lifestate;
+	DWORD GO_AngEyeAngle;
+	DWORD GO_Dormant;
+	DWORD GO_Team;
+	DWORD GO_Health;
+	DWORD GO_Origin;
+} GameOffsets;
 
 typedef struct _EntityInfo
 {
@@ -73,7 +76,7 @@ BOOL WINAPI ControlHandler(DWORD signal)
 			g_webRadarWSThread
 		};
 
-		WaitForMultipleObjects(ARRAYSIZE(events), &events, TRUE, 5000);
+		WaitForMultipleObjects(ARRAYSIZE(events), (const HANDLE *)&events, TRUE, 5000);
 
 		for (int i = 0u; i < ARRAYSIZE(events); i++)
 		{
@@ -185,15 +188,15 @@ DWORD WINAPI WebServerThread(LPVOID param)
 
 		// Add default headers
 		response.Headers.KnownHeaders[HttpHeaderServer].pRawValue = "SkyfailWebRadar";
-		response.Headers.KnownHeaders[HttpHeaderServer].RawValueLength = strlen("SkyfailWebRadar");
+		response.Headers.KnownHeaders[HttpHeaderServer].RawValueLength = (USHORT)strlen("SkyfailWebRadar");
 
-		if (!_stricmp(req->pRawUrl, "/"))
+		if (strcmp(req->pRawUrl, "/") == 0)
 		{
 			req->pRawUrl = "/static/index.htm";
-			req->RawUrlLength = strlen("/static/index.htm");
+			req->RawUrlLength = (USHORT)strlen("/static/index.htm");
 		}
 
-		if (strstr(req->pRawUrl, "/info") == req->pRawUrl + req->RawUrlLength - strlen("/info")) // crank logic
+		if (strcmp(req->pRawUrl, "/info") == 0)
 		{
 			// Serialize response data
 			JSON_Value *root_value = json_value_init_object();
@@ -227,6 +230,7 @@ DWORD WINAPI WebServerThread(LPVOID param)
 				json_object_set_number(player, "viewangle_x", (double)ent->viewAngles[0]);
 				json_object_set_number(player, "viewangle_y", (double)ent->viewAngles[1]);
 				json_object_set_string(player, "name", ent->name);
+				json_object_set_number(player, "index", (double)i);
 
 				json_array_append_value(players, playerValue);
 			}
@@ -236,7 +240,7 @@ DWORD WINAPI WebServerThread(LPVOID param)
 			json_object_set_value(root_object, "players", playersVal);
 
 			serializedString = json_serialize_to_string_pretty(root_value);
-			ULONG serializedLen = strlen(serializedString);
+			ULONG serializedLen = (USHORT)strlen(serializedString);
 		
 			// Add response data
 			dataChunk.DataChunkType = HttpDataChunkFromMemory;
@@ -244,7 +248,7 @@ DWORD WINAPI WebServerThread(LPVOID param)
 			dataChunk.FromMemory.BufferLength = serializedLen;
 
 			response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = contentType;
-			response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength = strlen(contentType);
+			response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength = (USHORT)strlen(contentType);
 			status = HttpSendHttpResponse(reqQueueHandle, req->RequestId, 0, &response, 0, NULL, NULL, 0, NULL, NULL);
 
 			// Make sure to free previously allocated memory
@@ -252,17 +256,17 @@ DWORD WINAPI WebServerThread(LPVOID param)
 
 			json_value_free(root_value);
 		}
-		else if (strstr(req->pRawUrl, "/static/"))
+		else if (strncmp(req->pRawUrl, "/static/", strlen("/static/")) == 0)
 		{
-			char *file = strstr(req->pRawUrl, "/static/") + strlen("/static/");
-			if (file >= req->pRawUrl + req->RawUrlLength || strstr(file, "..") || strstr(file, "\\") || strstr(file, "/"))
+			const char *file = req->pRawUrl + strlen("/static/");
+			if (file[0] == 0 || strstr(file, "..") != NULL || strpbrk(file, "/\\") != NULL)
 			{
 				response.StatusCode = 500;
 				response.pReason = "Internal server error";
 
 				dataChunk.DataChunkType = HttpDataChunkFromMemory;
 				dataChunk.FromMemory.pBuffer = "Internal server error";
-				dataChunk.FromMemory.BufferLength = strlen("Internal server error");
+				dataChunk.FromMemory.BufferLength = (USHORT)strlen("Internal server error");
 
 				status = HttpSendHttpResponse(reqQueueHandle, req->RequestId, 0, &response, 0, NULL, NULL, 0, NULL, NULL);
 			}
@@ -283,13 +287,13 @@ DWORD WINAPI WebServerThread(LPVOID param)
 
 					dataChunk.DataChunkType = HttpDataChunkFromMemory;
 					dataChunk.FromMemory.pBuffer = "404 Not Found";
-					dataChunk.FromMemory.BufferLength = strlen("404 Not Found");
+					dataChunk.FromMemory.BufferLength = (USHORT)strlen("404 Not Found");
 
 					status = HttpSendHttpResponse(reqQueueHandle, req->RequestId, 0, &response, 0, NULL, NULL, 0, NULL, NULL);
 				}
 				else
 				{
-					char *extension = strstr(file, "."); //yes actually it'd be the last dot but who cares
+					char *extension = strrchr(file, '.');
 					if (extension == NULL || extension >= file + strlen(file))
 					{
 						extension = "txt";
@@ -305,7 +309,7 @@ DWORD WINAPI WebServerThread(LPVOID param)
 					dataChunk.FromFileHandle.ByteRange.Length.QuadPart = (ULONGLONG)GetFileSize(dataChunk.FromFileHandle.FileHandle, NULL);
 
 					response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = contentType;
-					response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength = strlen(contentType);
+					response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength = (USHORT)strlen(contentType);
 					status = HttpSendHttpResponse(reqQueueHandle, req->RequestId, 0, &response, 0, NULL, NULL, 0, NULL, NULL);
 
 					CloseHandle(dataChunk.FromFileHandle.FileHandle);
@@ -332,9 +336,44 @@ DWORD WINAPI WebServerThread(LPVOID param)
 
 VOID ActionWebRadar(_Inout_ PPCILEECH_CONTEXT ctx)
 {
+	GameOffsets offsets;
+
 	memset(&mapName, 0, sizeof(mapName));
 	memset(&entities, 0, sizeof(entities));
+	memset(&offsets, 0, sizeof(offsets));
 
+	// Load hazedumper offsets
+	printf("[WebRadar by Skyfail] Loading offsets\n");
+	
+	JSON_Value *root_value = json_parse_file("hazedumper/csgo.min.json");
+	if (!root_value)
+	{
+		printf("[WebRadar by Skyfail] Failed to open csgo.min.json make sure to recursively clone this repository\n");
+		return;
+	}
+
+	JSON_Object *base_object = json_value_get_object(root_value);
+	JSON_Object *signatures = json_object_get_object(base_object, "signatures");
+	JSON_Object *netvars = json_object_get_object(base_object, "netvars");
+
+	offsets.GO_EntityList = (DWORD)json_object_get_number(signatures, "dwEntityList");
+	offsets.GO_ViewMatrix = (DWORD)json_object_get_number(signatures, "dwViewMatrix");
+	offsets.GO_ClientState = (DWORD)json_object_get_number(signatures, "dwClientState");
+	offsets.GO_ClientState_LocalPlayer = (DWORD)json_object_get_number(signatures, "dwClientState_GetLocalPlayer");
+	offsets.GO_ClientState_ViewAngle = (DWORD)json_object_get_number(signatures, "dwClientState_ViewAngles");
+	offsets.GO_ClientState_Map = (DWORD)json_object_get_number(signatures, "dwClientState_Map");
+	offsets.GO_ClientState_PlayerInfo = (DWORD)json_object_get_number(signatures, "dwClientState_PlayerInfo");
+
+	offsets.GO_Lifestate = (DWORD)json_object_get_number(netvars, "m_lifeState");
+	offsets.GO_AngEyeAngle = 0xB274;
+	offsets.GO_Dormant = 0xE9;
+	offsets.GO_Team = (DWORD)json_object_get_number(netvars, "m_iTeamNum");
+	offsets.GO_Health = (DWORD)json_object_get_number(netvars, "m_iHealth");
+	offsets.GO_Origin = (DWORD)json_object_get_number(netvars, "m_vecOrigin");
+
+	json_value_free(root_value);
+
+	// Launch webserver thread
 	g_webRadarExitEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
 	SetConsoleCtrlHandler(ControlHandler, TRUE);
 
@@ -353,11 +392,15 @@ VOID ActionWebRadar(_Inout_ PPCILEECH_CONTEXT ctx)
 	QWORD pEngineDll = 0;
 	QWORD pClientDll = 0;
 
+	BOOLEAN readSuccess = TRUE;
+
 	EnterCriticalSection(&ctxVmm->MasterLock);
 
 	while (!g_webRadarExit)
 	{
 		Sleep(10);
+
+		DWORD64 now = GetTickCount64();
 
 		// Get target process
 		if (targetProcess == NULL)
@@ -416,19 +459,25 @@ VOID ActionWebRadar(_Inout_ PPCILEECH_CONTEXT ctx)
 			continue;
 		}
 
+		if (!readSuccess)
+		{
+			printf("[WebRadar by Skyfail] Read failed, flushing TLB cache\n");
+		}
+
 		// Clear memory cache
 		// Maybe use VmmReadEx with VMM_FLAG_NOCACHE, but this way it allows us to be lazy about
 		// memory reading as pages will be cached by pcileech, causing no device communication to
 		// be required when doing multiple small reads instead of one big
 		// Example: read(entity + 0x50) + read(entity + 0x100) does not have to be
 		// combined
-		VmmCacheClear(ctxVmm, FALSE, TRUE);
+		VmmCacheClear(ctxVmm, !readSuccess, TRUE);
+		readSuccess = TRUE;
 
 		// Read data
 	
 		DWORD dwClientState = 0;
 
-		if (!VmmRead(ctxVmm, targetProcess, pEngineDll + WEBRADAR_OFF_CLIENTSTATE, (PBYTE)&dwClientState, sizeof(dwClientState)) ||
+		if (!VmmRead(ctxVmm, targetProcess, pEngineDll + offsets.GO_ClientState, (PBYTE)&dwClientState, sizeof(dwClientState)) ||
 			!VmmRead(ctxVmm, targetProcess, (QWORD)dwClientState, (PBYTE)&clientStateBuffer, sizeof(clientStateBuffer)))
 		{
 			// If the read failed our process might not be valid anymore
@@ -439,7 +488,7 @@ VOID ActionWebRadar(_Inout_ PPCILEECH_CONTEXT ctx)
 			continue;
 		}
 
-		memcpy(mapName, (const void *)&clientStateBuffer[WEBRADAR_OFF_CLIENTSTATE_MAP], sizeof(mapName));
+		memcpy(mapName, (const void *)&clientStateBuffer[offsets.GO_ClientState_Map], sizeof(mapName));
 
 		if (mapName[0] == 0)
 		{
@@ -449,18 +498,18 @@ VOID ActionWebRadar(_Inout_ PPCILEECH_CONTEXT ctx)
 			continue;
 		}
 
-		DWORD dwPlayerinfo = *(DWORD*)(&clientStateBuffer[WEBRADAR_OFF_CLIENTSTATE_PLAYERINFO]);
-		VmmRead(ctxVmm, targetProcess, dwPlayerinfo + 0x40, (PBYTE)&dwPlayerinfo, sizeof(dwPlayerinfo));
-		VmmRead(ctxVmm, targetProcess, dwPlayerinfo + 0xC, (PBYTE)&dwPlayerinfo, sizeof(dwPlayerinfo));
+		DWORD dwPlayerinfo = *(DWORD*)(&clientStateBuffer[offsets.GO_ClientState_PlayerInfo]);
+		readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, dwPlayerinfo + 0x40, (PBYTE)&dwPlayerinfo, sizeof(dwPlayerinfo));
+		readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, dwPlayerinfo + 0xC, (PBYTE)&dwPlayerinfo, sizeof(dwPlayerinfo));
 
-		unsigned int localPlayer = *(unsigned int *)(&clientStateBuffer[WEBRADAR_OFF_CLIENTSTATE_LOCAL]);
+		unsigned int localPlayer = *(unsigned int *)(&clientStateBuffer[offsets.GO_ClientState_LocalPlayer]);
 
 		for (unsigned int i = 0u; i < ARRAYSIZE(entities); i++)
 		{
 			EntityInfo *ent = &entities[i];
 
-			DWORD entityBase = pClientDll + WEBRADAR_OFF_ENTLIST + (i * 0x10);
-			VmmRead(ctxVmm, targetProcess, entityBase, (PBYTE)&entityBase, sizeof(entityBase));
+			DWORD entityBase = (DWORD)pClientDll + offsets.GO_EntityList + (i * 0x10);
+			readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, entityBase, (PBYTE)&entityBase, sizeof(entityBase));
 
 			if (entityBase == 0)
 			{
@@ -472,18 +521,18 @@ VOID ActionWebRadar(_Inout_ PPCILEECH_CONTEXT ctx)
 			{
 				ent->local = 1;
 
-				memcpy(&ent->viewAngles, (void *)&clientStateBuffer[WEBRADAR_OFF_CLIENTSTATE_VIEWANGLE], sizeof(&ent->viewAngles)); // use viewangle from clientstate
+				memcpy(&ent->viewAngles, (void *)&clientStateBuffer[offsets.GO_ClientState_ViewAngle], sizeof(&ent->viewAngles)); // use viewangle from clientstate
 			}
 			else
 			{
 				ent->local = 0;
 
-				VmmRead(ctxVmm, targetProcess, entityBase + WEBRADAR_OFF_ANGEYEANGLE, (PBYTE)&ent->viewAngles, sizeof(ent->viewAngles)); // use angEyeAngle netvar
+				readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, entityBase + offsets.GO_AngEyeAngle, (PBYTE)&ent->viewAngles, sizeof(ent->viewAngles)); // use angEyeAngle netvar
 			}
 
 			unsigned char isDormant = 0;
-			VmmRead(ctxVmm, targetProcess, entityBase + WEBRADAR_OFF_LIFESTATE, (PBYTE)&ent->lifestate, sizeof(ent->lifestate));
-			VmmRead(ctxVmm, targetProcess, entityBase + WEBRADAR_OFF_DORMANT, (PBYTE)&isDormant, sizeof(isDormant));
+			readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, entityBase + offsets.GO_Lifestate, (PBYTE)&ent->lifestate, sizeof(ent->lifestate));
+			readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, entityBase + offsets.GO_Dormant, (PBYTE)&isDormant, sizeof(isDormant));
 
 			if (isDormant)
 			{
@@ -494,13 +543,13 @@ VOID ActionWebRadar(_Inout_ PPCILEECH_CONTEXT ctx)
 
 			ent->valid = 1;
 
-			VmmRead(ctxVmm, targetProcess, entityBase + WEBRADAR_OFF_TEAM, (PBYTE)&ent->team, sizeof(ent->team));
-			VmmRead(ctxVmm, targetProcess, entityBase + WEBRADAR_OFF_HEALTH, (PBYTE)&ent->health, sizeof(ent->health));
-			VmmRead(ctxVmm, targetProcess, entityBase + WEBRADAR_OFF_ORIGIN, (PBYTE)&ent->origin, sizeof(ent->origin));
+			readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, entityBase + offsets.GO_Team, (PBYTE)&ent->team, sizeof(ent->team));
+			readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, entityBase + offsets.GO_Health, (PBYTE)&ent->health, sizeof(ent->health));
+			readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, entityBase + offsets.GO_Origin, (PBYTE)&ent->origin, sizeof(ent->origin));
 
 			DWORD dwPlayerInfoEntry = 0;
-			VmmRead(ctxVmm, targetProcess, dwPlayerinfo + 0x28 + i * 0x34, (PBYTE)&dwPlayerInfoEntry, sizeof(dwPlayerInfoEntry));
-			VmmRead(ctxVmm, targetProcess, dwPlayerInfoEntry + 0x10, (PBYTE)&ent->name, sizeof(ent->name) - 1);
+			readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, dwPlayerinfo + 0x28 + i * 0x34, (PBYTE)&dwPlayerInfoEntry, sizeof(dwPlayerInfoEntry));
+			readSuccess = readSuccess && VmmRead(ctxVmm, targetProcess, dwPlayerInfoEntry + 0x10, (PBYTE)&ent->name, sizeof(ent->name) - 1);
 
 			// quick maths
 			float forward[3];
